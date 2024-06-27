@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"sigs.k8s.io/karpenter/pkg/apis/v1beta1"
+
 	"github.com/awslabs/operatorpkg/singleton"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
@@ -68,13 +70,15 @@ func IsNodeDrainError(err error) bool {
 
 type QueueKey struct {
 	types.NamespacedName
-	UID types.UID
+	UID      types.UID
+	nodeName string
 }
 
 func NewQueueKey(pod *v1.Pod) QueueKey {
 	return QueueKey{
 		NamespacedName: client.ObjectKeyFromObject(pod),
 		UID:            pod.UID,
+		nodeName:       pod.Spec.NodeName,
 	}
 }
 
@@ -159,6 +163,10 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 // Evict returns true if successful eviction call, and false if not an eviction-related error
 func (q *Queue) Evict(ctx context.Context, key QueueKey) bool {
 	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("Pod", klog.KRef(key.Namespace, key.Name)))
+	evictionMessage, err := evictionReason(ctx, key, q.kubeClient)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed looking up pod eviction reason")
+	}
 	if err := q.kubeClient.SubResource("eviction").Create(ctx,
 		&v1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name}},
 		&policyv1.Eviction{
@@ -187,8 +195,34 @@ func (q *Queue) Evict(ctx context.Context, key QueueKey) bool {
 		log.FromContext(ctx).Error(err, "failed evicting pod")
 		return false
 	}
-	q.recorder.Publish(terminatorevents.EvictPod(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}))
+
+	q.recorder.Publish(terminatorevents.EvictPod(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}, evictionMessage))
 	return true
+}
+
+func getNodeClaims(ctx context.Context, key QueueKey, kubeClient client.Client) ([]*v1beta1.NodeClaim, error) {
+	nodeClaimList := &v1beta1.NodeClaimList{}
+	if err := kubeClient.List(ctx, nodeClaimList, client.MatchingFields{"status.nodeName": key.nodeName}); err != nil {
+		return nil, fmt.Errorf("listing nodeClaims, %w", err)
+	}
+	return lo.ToSlicePtr(nodeClaimList.Items), nil
+}
+
+func evictionReason(ctx context.Context, key QueueKey, kubeClient client.Client) (string, error) {
+	nodeClaims, err := getNodeClaims(ctx, key, kubeClient)
+	if err != nil {
+		return "", err
+	}
+	for _, nodeClaim := range nodeClaims {
+		terminationCondition := nodeClaim.StatusConditions().Get(v1beta1.ConditionTypeDisruptionCandidate)
+		if terminationCondition.IsTrue() {
+			return terminationCondition.Message, nil
+		}
+		if !nodeClaim.DeletionTimestamp.IsZero() {
+			return fmt.Sprintf("node %s/%s is marked for deletion", nodeClaim.Name, nodeClaim.Status.NodeName), nil
+		}
+	}
+	return "", nil
 }
 
 func (q *Queue) Reset() {

@@ -542,6 +542,7 @@ var _ = Describe("Disruption Taints", func() {
 		wg.Wait()
 		node = ExpectNodeExists(ctx, env.Client, node.Name)
 		Expect(node.Spec.Taints).ToNot(ContainElement(v1beta1.DisruptionNoScheduleTaint))
+		Expect(nodeClaim.StatusConditions().Get(v1beta1.ConditionTypeDisruptionCandidate)).To(BeNil())
 	})
 	It("should add and remove taints from NodeClaims that fail to disrupt", func() {
 		nodePool.Spec.Disruption.ConsolidationPolicy = v1beta1.ConsolidationPolicyWhenUnderutilized
@@ -578,6 +579,11 @@ var _ = Describe("Disruption Taints", func() {
 		}
 		node = ExpectNodeExists(ctx, env.Client, node.Name)
 		Expect(node.Spec.Taints).To(ContainElement(v1beta1.DisruptionNoScheduleTaint))
+		existingNodeClaim := lo.Filter(ExpectNodeClaims(ctx, env.Client), func(nc *v1beta1.NodeClaim, _ int) bool {
+			return nc.Name == nodeClaim.Name
+		})
+		Expect(existingNodeClaim[0].StatusConditions().Get(v1beta1.ConditionTypeDisruptionCandidate)).ToNot(BeNil())
+		Expect(existingNodeClaim[0].StatusConditions().Get(v1beta1.ConditionTypeDisruptionCandidate).IsTrue()).To(BeTrue())
 
 		createdNodeClaim := lo.Reject(ExpectNodeClaims(ctx, env.Client), func(nc *v1beta1.NodeClaim, _ int) bool {
 			return nc.Name == nodeClaim.Name
@@ -594,6 +600,7 @@ var _ = Describe("Disruption Taints", func() {
 
 		node = ExpectNodeExists(ctx, env.Client, node.Name)
 		Expect(node.Spec.Taints).ToNot(ContainElement(v1beta1.DisruptionNoScheduleTaint))
+		Expect(nodeClaim.StatusConditions().Get(v1beta1.ConditionTypeDisruptionCandidate)).To(BeNil())
 	})
 })
 

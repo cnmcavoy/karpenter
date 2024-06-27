@@ -24,12 +24,12 @@ import (
 	"sigs.k8s.io/karpenter/pkg/events"
 )
 
-func EvictPod(pod *v1.Pod) events.Event {
+func EvictPod(pod *v1.Pod, message string) events.Event {
 	return events.Event{
 		InvolvedObject: pod,
 		Type:           v1.EventTypeNormal,
 		Reason:         "Evicted",
-		Message:        "Evicted pod",
+		Message:        "Evicted pod: " + message,
 		DedupeValues:   []string{pod.Name},
 	}
 }

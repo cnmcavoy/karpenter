@@ -191,6 +191,9 @@ func NewOperator() (context.Context, *Operator) {
 	lo.Must0(mgr.GetFieldIndexer().IndexField(ctx, &v1beta1.NodeClaim{}, "status.providerID", func(o client.Object) []string {
 		return []string{o.(*v1beta1.NodeClaim).Status.ProviderID}
 	}), "failed to setup nodeclaim provider id indexer")
+	lo.Must0(mgr.GetFieldIndexer().IndexField(ctx, &v1beta1.NodeClaim{}, "status.nodeName", func(o client.Object) []string {
+		return []string{o.(*v1beta1.NodeClaim).Status.NodeName}
+	}), "failed to setup nodeclaim nodeName indexer")
 	lo.Must0(mgr.GetFieldIndexer().IndexField(ctx, &v1beta1.NodeClaim{}, "spec.nodeClassRef.apiVersion", func(o client.Object) []string {
 		return []string{o.(*v1beta1.NodeClaim).Spec.NodeClassRef.APIVersion}
 	}), "failed to setup nodeclaim nodeclassref apiversion indexer")
