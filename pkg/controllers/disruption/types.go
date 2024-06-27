@@ -44,6 +44,7 @@ type Method interface {
 	ComputeCommand(context.Context, map[string]map[v1.DisruptionReason]int, ...*Candidate) (Command, scheduling.Results, error)
 	Type() string
 	ConsolidationType() string
+	EvictionReason(nodeClaim *v1.NodeClaim) string
 }
 
 type CandidateFilter func(context.Context, *Candidate) bool

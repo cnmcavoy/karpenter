@@ -85,3 +85,7 @@ func (e *Emptiness) Type() string {
 func (e *Emptiness) ConsolidationType() string {
 	return ""
 }
+
+func (e *Emptiness) EvictionReason(nodeClaim *v1.NodeClaim) string {
+	return fmt.Sprintf("node %s was empty", nodeClaim.Status.NodeName)
+}

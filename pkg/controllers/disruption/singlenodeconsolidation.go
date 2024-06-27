@@ -106,3 +106,7 @@ func (s *SingleNodeConsolidation) Type() string {
 func (s *SingleNodeConsolidation) ConsolidationType() string {
 	return "single"
 }
+
+func (s *SingleNodeConsolidation) EvictionReason(nodeClaim *v1.NodeClaim) string {
+	return fmt.Sprintf("node %s was %s node consolidated", nodeClaim.Status.NodeName, s.ConsolidationType())
+}
