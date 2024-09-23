@@ -19,6 +19,14 @@ package disruption
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/clock"
+	"math"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	nodeutil "sigs.k8s.io/karpenter/pkg/utils/node"
+	podutil "sigs.k8s.io/karpenter/pkg/utils/pod"
 	"sort"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,14 +45,16 @@ type Drift struct {
 	cluster     *state.Cluster
 	provisioner *provisioning.Provisioner
 	recorder    events.Recorder
+	clock       clock.Clock
 }
 
-func NewDrift(kubeClient client.Client, cluster *state.Cluster, provisioner *provisioning.Provisioner, recorder events.Recorder) *Drift {
+func NewDrift(clock clock.Clock, kubeClient client.Client, cluster *state.Cluster, provisioner *provisioning.Provisioner, recorder events.Recorder) *Drift {
 	return &Drift{
 		kubeClient:  kubeClient,
 		cluster:     cluster,
 		provisioner: provisioner,
 		recorder:    recorder,
+		clock:       clock,
 	}
 }
 
@@ -77,16 +87,40 @@ func (d *Drift) ComputeCommand(ctx context.Context, disruptionBudgetMapping map[
 	}
 	// Disrupt all empty drifted candidates, as they require no scheduling simulations.
 	if len(empty) > 0 {
+		log.FromContext(ctx).V(1).Info(fmt.Sprintf("prioritizing empty drift candidates, %d nodes", len(empty)))
 		return Command{
 			candidates: empty,
 		}, scheduling.Results{}, nil
 	}
 
+	unevictablePodsCache := map[string]int{}
+	unevictablePods := func(candidate *Candidate) int {
+		if count, ok := unevictablePodsCache[candidate.Node.Name]; ok {
+			return count
+		}
+		pods, err := nodeutil.GetPods(ctx, d.kubeClient, candidate.Node)
+		if err != nil {
+			log.FromContext(ctx).V(1).Error(err, "listing pods on node")
+			return math.MaxInt
+		}
+		count := lo.CountBy(pods, func(p *corev1.Pod) bool { return !podutil.IsDisruptable(p) && podutil.IsWaitingEviction(p, d.clock) })
+		unevictablePodsCache[candidate.Node.Name] = count
+		return count
+	}
+
+	sort.SliceStable(candidates, func(a, b int) bool {
+		return unevictablePods(candidates[a]) < unevictablePods(candidates[b])
+	})
+
 	for _, candidate := range candidates {
+		count := unevictablePods(candidate)
+		log.FromContext(ctx).V(1).Info("drift candidate", "node", candidate.Node.Name, "podsWaitingEvictionCount", count)
+
 		// If the disruption budget doesn't allow this candidate to be disrupted,
 		// continue to the next candidate. We don't need to decrement any budget
 		// counter since drift commands can only have one candidate.
 		if disruptionBudgetMapping[candidate.nodePool.Name][d.Reason()] == 0 {
+			log.FromContext(ctx).V(1).Info(fmt.Sprintf("drifted nodeclaim %s skipped, nodepool %s has no drift budget remaining", candidate.NodeClaim.Name, candidate.nodePool.Name))
 			continue
 		}
 		// Check if we need to create any NodeClaims.
@@ -100,9 +134,12 @@ func (d *Drift) ComputeCommand(ctx context.Context, disruptionBudgetMapping map[
 		}
 		// Emit an event that we couldn't reschedule the pods on the node.
 		if !results.AllNonPendingPodsScheduled() {
+			log.FromContext(ctx).V(1).Info(fmt.Sprintf("drifted nodeclaim %s skipped, %d pods could not be rescheduled", candidate.NodeClaim.Name, len(results.NonPendingPodSchedulingErrors())))
 			d.recorder.Publish(disruptionevents.Blocked(candidate.Node, candidate.NodeClaim, results.NonPendingPodSchedulingErrors())...)
 			continue
 		}
+
+		log.FromContext(ctx).V(1).Info(fmt.Sprintf("returning drift candidate nodeclaim %s, new node claims: %+v", candidate.NodeClaim.Name, results.NewNodeClaims))
 
 		return Command{
 			candidates:   []*Candidate{candidate},

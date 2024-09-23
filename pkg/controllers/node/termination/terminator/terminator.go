@@ -19,6 +19,7 @@ package terminator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/samber/lo"
@@ -100,17 +101,23 @@ func (t *Terminator) Drain(ctx context.Context, node *corev1.Node, nodeGracePeri
 	podsToDelete := lo.Filter(pods, func(p *corev1.Pod, _ int) bool {
 		return podutil.IsWaitingEviction(p, t.clock) && !podutil.IsTerminating(p)
 	})
+	log.FromContext(ctx).V(1).Info("deleting expired pods", "node", node.Name, "podsToDelete", strings.Join(lo.Map(podsToDelete, func(p *corev1.Pod, index int) string {
+		return p.Name
+	}), ","))
 	if err := t.DeleteExpiringPods(ctx, podsToDelete, nodeGracePeriodExpirationTime); err != nil {
 		return fmt.Errorf("deleting expiring pods, %w", err)
 	}
 
 	// evictablePods are pods that aren't yet terminating are eligible to have the eviction API called against them
 	evictablePods := lo.Filter(pods, func(p *corev1.Pod, _ int) bool { return podutil.IsEvictable(p) })
+	log.FromContext(ctx).V(1).Info("evicting pods", "node", node.Name, "evictablePods", len(evictablePods))
 	t.Evict(evictablePods)
 
 	// podsWaitingEvictionCount is the number of pods that either haven't had eviction called against them yet
 	// or are still actively terminating and haven't exceeded their termination grace period yet
 	podsWaitingEvictionCount := lo.CountBy(pods, func(p *corev1.Pod) bool { return podutil.IsWaitingEviction(p, t.clock) })
+	log.FromContext(ctx).V(1).Info("pods waiting on eviction", "node", node.Name, "podsWaitingEvictionCount", podsWaitingEvictionCount)
+
 	if podsWaitingEvictionCount > 0 {
 		return NewNodeDrainError(fmt.Errorf("%d pods are waiting to be evicted", len(pods)))
 	}

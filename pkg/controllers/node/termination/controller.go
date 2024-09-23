@@ -99,6 +99,7 @@ func (c *Controller) finalize(ctx context.Context, node *corev1.Node) (reconcile
 	if err != nil {
 		return reconcile.Result{}, err
 	}
+	log.FromContext(ctx).V(1).Info("finalizing node for termination", "node", node.Name, "nodeTerminationTime", nodeTerminationTime)
 
 	if err := c.terminator.Taint(ctx, node, v1.DisruptedNoScheduleTaint); err != nil {
 		return reconcile.Result{}, fmt.Errorf("tainting node with %s, %w", v1.DisruptedTaintKey, err)
@@ -129,6 +130,8 @@ func (c *Controller) finalize(ctx context.Context, node *corev1.Node) (reconcile
 	// However, if TerminationGracePeriod is configured for Node, and we are past that period, we will skip waiting.
 	if nodeTerminationTime == nil || c.clock.Now().Before(*nodeTerminationTime) {
 		areVolumesDetached, err := c.ensureVolumesDetached(ctx, node)
+		log.FromContext(ctx).V(1).Info("checking volumes are detached", "node", node.Name, "areVolumesDetached", areVolumesDetached)
+
 		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("ensuring no volume attachments, %w", err)
 		}

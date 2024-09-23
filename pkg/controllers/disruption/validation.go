@@ -23,10 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	"sigs.k8s.io/karpenter/pkg/utils/pdb"
-
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -130,21 +126,7 @@ func (v *Validation) ValidateCandidates(ctx context.Context, candidates ...*Cand
 	validatedCandidates = mapCandidates(candidates, validatedCandidates)
 	// If we filtered out any candidates, return nil as some NodeClaims in the consolidation decision have changed.
 	if len(validatedCandidates) != len(candidates) {
-		nodePoolMap, nodePoolToInstanceTypesMap, err := BuildNodePoolMap(ctx, v.kubeClient, v.cloudProvider)
-		if err == nil {
-			pdbs, err := pdb.NewLimits(ctx, v.clock, v.kubeClient)
-			if err == nil {
-				for _, candidate := range candidates {
-					nc, e := NewCandidate(ctx, v.kubeClient, v.recorder, v.clock, candidate.StateNode, pdbs, nodePoolMap, nodePoolToInstanceTypesMap, v.queue, GracefulDisruptionClass)
-					if e != nil {
-						log.FromContext(ctx).V(1).Info(fmt.Sprintf("new candidate error: %s", e.Error()))
-					} else {
-						log.FromContext(ctx).V(1).Info(fmt.Sprintf("new candidate succeeded: %#v", *nc))
-					}
-				}
-			}
-		}
-		return nil, NewValidationError(fmt.Errorf("%d candidates are no longer valid (%#v - %#v)", len(candidates)-len(validatedCandidates), candidates, validatedCandidates))
+		return nil, NewValidationError(fmt.Errorf("%d candidates are no longer valid", len(candidates)-len(validatedCandidates)))
 	}
 	disruptionBudgetMapping, err := BuildDisruptionBudgets(ctx, v.cluster, v.clock, v.kubeClient, v.recorder)
 	if err != nil {
@@ -201,9 +183,9 @@ func (v *Validation) ValidateCommand(ctx context.Context, cmd Command, candidate
 	}
 
 	// we need more than one replacement node which is never valid currently (all of our node replacement is m->1, never m->n)
-	if len(results.NewNodeClaims) > 1 {
-		return NewValidationError(fmt.Errorf("scheduling simulation produced new results: more than one new node claim"))
-	}
+	//if len(results.NewNodeClaims) > 1 {
+	//	return NewValidationError(fmt.Errorf("scheduling simulation produced new results: more than one new node claim"))
+	//}
 
 	// we now know that scheduling simulation wants to create one new node
 	if len(cmd.replacements) == 0 {

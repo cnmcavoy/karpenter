@@ -47,6 +47,10 @@ func LifetimeRemaining(clock clock.Clock, nodePool *v1.NodePool, nodeClaim *v1.N
 
 // EvictionCost returns the disruption cost computed for evicting the given pod.
 func EvictionCost(ctx context.Context, p *corev1.Pod) float64 {
+	if _, ok := p.Annotations[v1.DoNotDisruptAnnotationKey]; ok {
+		return 100
+	}
+
 	cost := 1.0
 	podDeletionCostStr, ok := p.Annotations[corev1.PodDeletionCost]
 	if ok {
