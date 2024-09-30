@@ -196,10 +196,11 @@ func BuildNodePoolMap(ctx context.Context, kubeClient client.Client, cloudProvid
 // We calculate allowed disruptions by taking the max disruptions allowed by disruption reason and subtracting the number of nodes that are NotReady and already being deleted by that disruption reason.
 //
 //nolint:gocyclo
-func BuildDisruptionBudgets(ctx context.Context, cluster *state.Cluster, clk clock.Clock, kubeClient client.Client, recorder events.Recorder) (map[string]map[v1.DisruptionReason]int, error) {
+func BuildDisruptionBudgets(ctx context.Context, cluster *state.Cluster, clk clock.Clock, kubeClient client.Client, recorder events.Recorder) (*Budget, error) {
 	disruptionBudgetMapping := map[string]map[v1.DisruptionReason]int{}
-	numNodes := map[string]int{}   // map[nodepool] -> node count in nodepool
-	disrupting := map[string]int{} // map[nodepool] -> nodes undergoing disruption
+	budget := NewBudget(disruptionBudgetMapping)
+	numNodes := map[string]int{} // map[nodepool] -> node count in nodepool
+	//disrupting := map[string]int{} // map[nodepool] -> nodes undergoing disruption
 	for _, node := range cluster.Nodes() {
 		// We only consider nodes that we own and are initialized towards the total.
 		// If a node is launched/registered, but not initialized, pods aren't scheduled
@@ -219,7 +220,9 @@ func BuildDisruptionBudgets(ctx context.Context, cluster *state.Cluster, clk clo
 		// 1. Has a NotReady conditiion
 		// 2. Is marked as disrupting
 		if cond := nodeutils.GetCondition(node.Node, corev1.NodeReady); cond.Status != corev1.ConditionTrue || node.MarkedForDeletion() {
-			disrupting[nodePool]++
+			budget.Allocate(nodePool, v1.DisruptionReasonDrifted, node.Node.Name)
+			budget.Allocate(nodePool, v1.DisruptionReasonUnderutilized, node.Node.Name)
+			budget.Allocate(nodePool, v1.DisruptionReasonEmpty, node.Node.Name)
 		}
 	}
 	nodePoolList := &v1.NodePoolList{}
@@ -235,7 +238,7 @@ func BuildDisruptionBudgets(ctx context.Context, cluster *state.Cluster, clk clo
 			// Subtract the allowed number of disruptions from the number of already disrupting nodes.
 			// Floor the value since the number of disrupting nodes can exceed the number of allowed disruptions.
 			// Allowing this value to be negative breaks assumptions in the code used to calculate how many nodes can be disrupted.
-			allowedDisruptions := lo.Clamp(minDisruptions-disrupting[nodePool.Name], 0, math.MaxInt32)
+			allowedDisruptions := lo.Clamp(minDisruptions, 0, math.MaxInt32)
 			disruptionBudgetMapping[nodePool.Name][reason] = allowedDisruptions
 
 			allowedDisruptionsTotal += allowedDisruptions
@@ -250,7 +253,7 @@ func BuildDisruptionBudgets(ctx context.Context, cluster *state.Cluster, clk clo
 			recorder.Publish(disruptionevents.NodePoolBlocked(lo.ToPtr(nodePool)))
 		}
 	}
-	return disruptionBudgetMapping, nil
+	return budget, nil
 }
 
 // mapCandidates maps the list of proposed candidates with the current state

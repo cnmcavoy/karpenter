@@ -146,7 +146,7 @@ func (v *Validation) ValidateCandidates(ctx context.Context, candidates ...*Cand
 		}
 		return nil, NewValidationError(fmt.Errorf("%d candidates are no longer valid (%#v - %#v)", len(candidates)-len(validatedCandidates), candidates, validatedCandidates))
 	}
-	disruptionBudgetMapping, err := BuildDisruptionBudgets(ctx, v.cluster, v.clock, v.kubeClient, v.recorder)
+	budget, err := BuildDisruptionBudgets(ctx, v.cluster, v.clock, v.kubeClient, v.recorder)
 	if err != nil {
 		return nil, fmt.Errorf("building disruption budgets, %w", err)
 	}
@@ -157,10 +157,10 @@ func (v *Validation) ValidateCandidates(ctx context.Context, candidates ...*Cand
 		if v.cluster.IsNodeNominated(vc.ProviderID()) {
 			return nil, NewValidationError(fmt.Errorf("a candidate was nominated during validation"))
 		}
-		if disruptionBudgetMapping[vc.nodePool.Name][v.reason] == 0 {
+		if budget.Capacity(vc.nodePool.Name, v.reason) == 0 {
 			return nil, NewValidationError(fmt.Errorf("a candidate can no longer be disrupted without violating budgets"))
 		}
-		disruptionBudgetMapping[vc.nodePool.Name][v.reason]--
+		budget.Allocate(vc.nodePool.Name, v.reason, vc.Node.Name)
 	}
 	return validatedCandidates, nil
 }

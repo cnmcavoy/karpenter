@@ -405,6 +405,10 @@ func (in *StateNode) PodLimits() corev1.ResourceList {
 	return resources.Merge(lo.Values(in.podLimits)...)
 }
 
+func (in *StateNode) MarkedForDeletionRAW() bool {
+	return in.markedForDeletion
+}
+
 func (in *StateNode) MarkedForDeletion() bool {
 	// The Node is marked for deletion if:
 	//  1. The Node has MarkedForDeletion set

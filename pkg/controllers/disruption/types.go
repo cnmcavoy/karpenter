@@ -23,9 +23,10 @@ import (
 
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/clock"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/utils/pod"
 
@@ -46,7 +47,7 @@ const (
 
 type Method interface {
 	ShouldDisrupt(context.Context, *Candidate) bool
-	ComputeCommand(context.Context, map[string]map[v1.DisruptionReason]int, ...*Candidate) (Command, scheduling.Results, error)
+	ComputeCommand(context.Context, *Budget, ...*Candidate) (Command, scheduling.Results, error)
 	Reason() v1.DisruptionReason
 	Class() string
 	ConsolidationType() string
@@ -180,4 +181,44 @@ func (c Command) String() string {
 		nodeDesc,
 		scheduling.InstanceTypeList(c.replacements[0].InstanceTypeOptions))
 	return buf.String()
+}
+
+type Budget struct {
+	capacity    map[string]map[v1.DisruptionReason]int
+	allocations map[string]map[v1.DisruptionReason]sets.Set[string]
+}
+
+func NewBudget(capacity map[string]map[v1.DisruptionReason]int) *Budget {
+	return &Budget{
+		capacity:    capacity,
+		allocations: make(map[string]map[v1.DisruptionReason]sets.Set[string]),
+	}
+}
+
+func (b *Budget) Capacity(nodepoolName string, reason v1.DisruptionReason) int {
+	if disruptionBudgets, ok := b.capacity[nodepoolName]; ok {
+		if capacity, ok := disruptionBudgets[reason]; ok {
+			return capacity - b.Allocations(nodepoolName, reason)
+		}
+	}
+	return b.capacity[nodepoolName][reason]
+}
+
+func (b *Budget) Allocations(nodepoolName string, reason v1.DisruptionReason) int {
+	if disruptionAllocs, ok := b.allocations[nodepoolName]; ok {
+		if alloc, ok := disruptionAllocs[reason]; ok {
+			return alloc.Len()
+		}
+	}
+	return 0
+}
+
+func (b *Budget) Allocate(nodePoolName string, reason v1.DisruptionReason, nodeName string) {
+	if _, ok := b.allocations[nodePoolName]; !ok {
+		b.allocations[nodePoolName] = make(map[v1.DisruptionReason]sets.Set[string])
+	}
+	if _, ok := b.allocations[nodePoolName][reason]; !ok {
+		b.allocations[nodePoolName][reason] = make(sets.Set[string])
+	}
+	b.allocations[nodePoolName][reason].Insert(nodeName)
 }

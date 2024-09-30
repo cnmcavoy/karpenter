@@ -44,7 +44,7 @@ func NewMultiNodeConsolidation(consolidation consolidation) *MultiNodeConsolidat
 }
 
 // nolint:gocyclo
-func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, disruptionBudgetMapping map[string]map[v1.DisruptionReason]int, candidates ...*Candidate) (Command, scheduling.Results, error) {
+func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, budget *Budget, candidates ...*Candidate) (Command, scheduling.Results, error) {
 	if m.IsConsolidated() {
 		return Command{}, scheduling.Results{}, nil
 	}
@@ -81,7 +81,7 @@ func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, disruptionB
 				}
 				// If there's disruptions allowed for the candidate's nodepool,
 				// add it to the list of candidates, and decrement the budget.
-				if disruptionBudgetMapping[candidate.nodePool.Name][m.Reason()] == 0 {
+				if budget.Capacity(candidate.nodePool.Name, m.Reason()) == 0 {
 					constrainedByBudgets = true
 					continue
 				}
@@ -93,7 +93,7 @@ func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, disruptionB
 				}
 				// set constrainedByBudgets to true if any node was a candidate but was constrained by a budget
 				disruptableCandidates = append(disruptableCandidates, candidate)
-				disruptionBudgetMapping[candidate.nodePool.Name][v1.DisruptionReasonUnderutilized]--
+				budget.Allocate(candidate.nodePool.Name, m.Reason(), candidate.Node.Name)
 			}
 
 			// Only consider a maximum batch of 100 NodeClaims to save on computation.
@@ -119,7 +119,7 @@ func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, disruptionB
 			if err := NewValidation(m.clock, m.cluster, m.kubeClient, m.provisioner, m.cloudProvider, m.recorder, m.queue, m.Reason()).IsValid(ctx, cmd, consolidationTTL); err != nil {
 				if IsValidationError(err) {
 					log.FromContext(ctx).V(1).Info(fmt.Sprintf("abandoning multi-node consolidation attempt due to pod churn, command is no longer valid, %s: %s", cmd, err.Error()))
-					return Command{}, scheduling.Results{}, nil
+					continue
 				}
 				return Command{}, scheduling.Results{}, fmt.Errorf("validating consolidation, %w", err)
 			}

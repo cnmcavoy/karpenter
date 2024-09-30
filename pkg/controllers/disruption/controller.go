@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -131,6 +132,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 		c.recordRun(fmt.Sprintf("%T", m))
 		success, err := c.disrupt(ctx, m)
 		if err != nil {
+			log.FromContext(ctx).Error(err, fmt.Sprintf("disrupting via reason=%q", strings.ToLower(string(m.Reason()))))
 			return reconcile.Result{}, fmt.Errorf("disrupting via reason=%q, %w", strings.ToLower(string(m.Reason())), err)
 		}
 		if success {
@@ -159,14 +161,17 @@ func (c *Controller) disrupt(ctx context.Context, disruption Method) (bool, erro
 	if len(candidates) == 0 {
 		return false, nil
 	}
-	disruptionBudgetMapping, err := BuildDisruptionBudgets(ctx, c.cluster, c.clock, c.kubeClient, c.recorder)
+	budget, err := BuildDisruptionBudgets(ctx, c.cluster, c.clock, c.kubeClient, c.recorder)
 	if err != nil {
 		return false, fmt.Errorf("building disruption budgets, %w", err)
 	}
 	// Determine the disruption action
-	cmd, schedulingResults, err := disruption.ComputeCommand(ctx, disruptionBudgetMapping, candidates...)
+	cmd, schedulingResults, err := disruption.ComputeCommand(ctx, budget, candidates...)
 	if err != nil {
 		return false, fmt.Errorf("computing disruption decision, %w", err)
+	}
+	if err := c.logState(ctx, budget, cmd, schedulingResults); err != nil {
+		log.FromContext(ctx).Error(err, "failed to export state to configmap")
 	}
 	if cmd.Decision() == NoOpDecision {
 		return false, nil
@@ -177,6 +182,56 @@ func (c *Controller) disrupt(ctx context.Context, disruption Method) (bool, erro
 		return false, fmt.Errorf("disrupting candidates, %w", err)
 	}
 	return true, nil
+}
+
+func (c *Controller) logState(ctx context.Context, budget *Budget, cmd Command, results scheduling.Results) error {
+	nodePools := make([]string, 0, len(budget.capacity))
+	for nodePool := range budget.capacity {
+		nodePools = append(nodePools, nodePool)
+	}
+	sort.Strings(nodePools)
+
+	markedForDeletion := make([]string, 0)
+	for _, statenode := range c.cluster.Nodes() {
+		if statenode.MarkedForDeletionRAW() {
+			markedForDeletion = append(markedForDeletion, statenode.Node.Name)
+		}
+	}
+	nodesTerminating := make([]string, 0)
+	for _, statenode := range c.cluster.Nodes() {
+		if statenode.Node != nil && !statenode.Node.GetDeletionTimestamp().IsZero() {
+			nodesTerminating = append(nodesTerminating, statenode.Node.Name)
+		}
+	}
+
+	var buffer strings.Builder
+	buffer.WriteString("Nodes Marked for Deletion: " + strings.Join(markedForDeletion, ",") + "\n")
+	buffer.WriteString("Nodes Terminating: " + strings.Join(nodesTerminating, ",") + "\n")
+	buffer.WriteString("Nodepools:")
+
+	for _, nodePool := range nodePools {
+		buffer.WriteString(fmt.Sprintf(`
+	NodePool: %s
+		Underutilized:
+			Capacity: %d
+			Allocated: %d
+			Nodes: %s
+		Empty:
+			Capacity: %d
+			Allocated: %d
+			Nodes: %s
+		Drifted:
+			Capacity: %d
+			Allocated: %d
+			Nodes: %s
+`, nodePool,
+			budget.capacity[nodePool][v1.DisruptionReasonUnderutilized], budget.Allocations(nodePool, v1.DisruptionReasonUnderutilized), strings.Join(budget.allocations[nodePool][v1.DisruptionReasonUnderutilized].UnsortedList(), ","),
+			budget.capacity[nodePool][v1.DisruptionReasonEmpty], budget.Allocations(nodePool, v1.DisruptionReasonEmpty), strings.Join(budget.allocations[nodePool][v1.DisruptionReasonEmpty].UnsortedList(), ","),
+			budget.capacity[nodePool][v1.DisruptionReasonDrifted], budget.Allocations(nodePool, v1.DisruptionReasonDrifted), strings.Join(budget.allocations[nodePool][v1.DisruptionReasonDrifted].UnsortedList(), ",")))
+	}
+
+	log.FromContext(ctx).Info(buffer.String())
+	return nil
 }
 
 // executeCommand will do the following, untainting if the step fails.
@@ -219,19 +274,25 @@ func (c *Controller) executeCommand(ctx context.Context, m Method, cmd Command, 
 	providerIDs := lo.Map(cmd.candidates, func(c *Candidate, _ int) string { return c.ProviderID() })
 	// We have the new NodeClaims created at the API server so mark the old NodeClaims for deletion
 	c.cluster.MarkForDeletion(providerIDs...)
+	log.FromContext(ctx).Info("marking nodes for deletion", "providerIDs", len(providerIDs))
 
 	// Set the status of the nodeclaims to reflect that they are disruption candidates
 	err = multierr.Combine(lo.Map(cmd.candidates, func(candidate *Candidate, _ int) error {
-		m.Class()
+		err := c.kubeClient.Get(ctx, client.ObjectKeyFromObject(candidate.NodeClaim), candidate.NodeClaim)
+		if err != nil {
+			return err
+		}
 		candidate.NodeClaim.StatusConditions().SetTrueWithReason(v1.ConditionTypeDisruptionCandidate, v1.ConditionTypeDisruptionCandidate, disruptionReason(m, candidate.NodeClaim))
 		return c.kubeClient.Status().Update(ctx, candidate.NodeClaim)
 	})...)
 	if err != nil {
+		c.cluster.UnmarkForDeletion(providerIDs...)
 		return multierr.Append(fmt.Errorf("updating nodeclaim status: %w", err), state.RequireNoScheduleTaint(ctx, c.kubeClient, false, stateNodes...))
 	}
 
 	if err := c.queue.Add(orchestration.NewCommand(nodeClaimNames,
 		lo.Map(cmd.candidates, func(c *Candidate, _ int) *state.StateNode { return c.StateNode }), commandID, m.Reason(), m.ConsolidationType())); err != nil {
+
 		c.cluster.UnmarkForDeletion(providerIDs...)
 		err = multierr.Combine(err, multierr.Combine(lo.Map(cmd.candidates, func(candidate *Candidate, _ int) error {
 			return multierr.Append(candidate.NodeClaim.StatusConditions().Clear(v1.ConditionTypeDisruptionCandidate), c.kubeClient.Status().Update(ctx, candidate.NodeClaim))
