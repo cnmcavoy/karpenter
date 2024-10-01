@@ -204,6 +204,7 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			// mark this item as done processing. This is necessary so that the RLI is able to add the item back in.
 			q.RateLimitingInterface.Done(cmd)
 			q.RateLimitingInterface.AddRateLimited(cmd)
+			log.FromContext(ctx).V(1).Info("disruption queue retrying after recoverable err", "err", err.Error(), "length", q.Len())
 			return reconcile.Result{RequeueAfter: singleton.RequeueImmediately}, nil
 		}
 		// If the command failed, bail on the action.
@@ -225,7 +226,7 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 		}), ",")).Error(multiErr, "failed terminating nodes while executing a disruption command")
 	}
 	// If command is complete, remove command from queue.
-	q.Remove(cmd)
+	q.Remove(cmd, ctx)
 	log.FromContext(ctx).V(1).Info("command succeeded")
 	return reconcile.Result{RequeueAfter: singleton.RequeueImmediately}, nil
 }
@@ -333,11 +334,23 @@ func (q *Queue) HasAny(ids ...string) bool {
 }
 
 // Remove fully clears the queue of all references of a hash/command
-func (q *Queue) Remove(cmd *Command) {
+func (q *Queue) Remove(cmd *Command, ctx context.Context) {
 	// mark this item as done processing. This is necessary so that the RLI is able to add the item back in.
 	q.RateLimitingInterface.Done(cmd)
 	q.RateLimitingInterface.Forget(cmd)
+	log.FromContext(ctx).Info("removing and unmarking nodes for deletion", "candidates", len(cmd.candidates))
 	q.cluster.UnmarkForDeletion(lo.Map(cmd.candidates, func(s *state.StateNode, _ int) string { return s.ProviderID() })...)
+	err := multierr.Combine(lo.Map(cmd.candidates, func(candidate *state.StateNode, _ int) error {
+		err := q.kubeClient.Get(ctx, types.NamespacedName{Name: candidate.NodeClaim.Name}, candidate.NodeClaim)
+		if err != nil {
+			return err
+		}
+		return multierr.Append(candidate.NodeClaim.StatusConditions().Clear(v1.ConditionTypeDisruptionCandidate), q.kubeClient.Status().Update(ctx, candidate.NodeClaim))
+	})...)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to clear disruption candidate nodeclaim condition")
+	}
+
 	// Remove all candidates linked to the command
 	q.mu.Lock()
 	for _, candidate := range cmd.candidates {

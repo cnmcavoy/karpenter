@@ -222,11 +222,15 @@ func (c *Controller) executeCommand(ctx context.Context, m Method, cmd Command, 
 
 	// Set the status of the nodeclaims to reflect that they are disruption candidates
 	err = multierr.Combine(lo.Map(cmd.candidates, func(candidate *Candidate, _ int) error {
-		m.Class()
+		err := c.kubeClient.Get(ctx, client.ObjectKeyFromObject(candidate.NodeClaim), candidate.NodeClaim)
+		if err != nil {
+			return err
+		}
 		candidate.NodeClaim.StatusConditions().SetTrueWithReason(v1.ConditionTypeDisruptionCandidate, v1.ConditionTypeDisruptionCandidate, disruptionReason(m, candidate.NodeClaim))
 		return c.kubeClient.Status().Update(ctx, candidate.NodeClaim)
 	})...)
 	if err != nil {
+		c.cluster.UnmarkForDeletion(providerIDs...)
 		return multierr.Append(fmt.Errorf("updating nodeclaim status: %w", err), state.RequireNoScheduleTaint(ctx, c.kubeClient, false, stateNodes...))
 	}
 
