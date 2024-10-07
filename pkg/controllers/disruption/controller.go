@@ -21,6 +21,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +96,7 @@ func NewController(clk clock.Clock, kubeClient client.Client, provisioner *provi
 
 func NewMethods(clk clock.Clock, cluster *state.Cluster, kubeClient client.Client, provisioner *provisioning.Provisioner, cp cloudprovider.CloudProvider, recorder events.Recorder, queue *Queue) []Method {
 	c := MakeConsolidation(clk, cluster, kubeClient, provisioner, cp, recorder, queue)
-	return []Method{
+	methods := []Method{
 		// Delete any empty NodeClaims as there is zero cost in terms of disruption.
 		NewEmptiness(c),
 		// Terminate any NodeClaims that have drifted from provisioning specifications, allowing the pods to reschedule.
@@ -103,8 +104,15 @@ func NewMethods(clk clock.Clock, cluster *state.Cluster, kubeClient client.Clien
 		// Attempt to identify multiple NodeClaims that we can consolidate simultaneously to reduce pod churn
 		NewMultiNodeConsolidation(c),
 		// And finally fall back our single NodeClaim consolidation to further reduce cluster cost.
-		NewSingleNodeConsolidation(c),
+		//NewSingleNodeConsolidation(c),
 	}
+	if os.Getenv("INDEED_ENABLE_SINGLE_NODE_CONSOLIDATION") == "true" {
+		fmt.Printf("enabling single node consolidation\n")
+		methods = append(methods, NewSingleNodeConsolidation(c))
+	} else {
+		fmt.Printf("single node consolidation is disabled\n")
+	}
+	return methods
 }
 
 func (c *Controller) Register(_ context.Context, m manager.Manager) error {

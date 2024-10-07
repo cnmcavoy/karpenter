@@ -19,6 +19,7 @@ package disruption_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -111,6 +112,7 @@ var _ = BeforeEach(func() {
 	recorder.Reset() // Reset the events that we captured during the run
 
 	// Ensure that we reset the disruption controller's methods after each test run
+	os.Setenv("INDEED_ENABLE_SINGLE_NODE_CONSOLIDATION", "true")
 	disruptionController = disruption.NewController(fakeClock, env.Client, prov, cloudProvider, recorder, cluster, queue, disruption.WithMethods(NewMethodsWithNopValidator()...))
 	fakeClock.SetTime(time.Now())
 	cluster.Reset()
