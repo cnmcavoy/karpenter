@@ -21,6 +21,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -72,6 +73,23 @@ func NewController(clk clock.Clock, kubeClient client.Client, provisioner *provi
 ) *Controller {
 	c := MakeConsolidation(clk, cluster, kubeClient, provisioner, cp, recorder, queue)
 
+	methods := []Method{
+		// Terminate any NodeClaims that have need to be eventually disrupted from provisioning specifications, allowing the pods to reschedule.
+		// Terminate any NodeClaims that have drifted from provisioning specifications, allowing the pods to reschedule.
+		NewDrift(kubeClient, cluster, provisioner, recorder),
+		// Delete any empty NodeClaims as there is zero cost in terms of disruption.
+		NewEmptiness(c),
+		// Attempt to identify multiple NodeClaims that we can consolidate simultaneously to reduce pod churn
+		NewMultiNodeConsolidation(c),
+	}
+
+	if os.Getenv("INDEED_ENABLE_SINGLE_NODE_CONSOLIDATION") == "true" {
+		fmt.Printf("enabling single node consolidation\n")
+		methods = append(methods, NewSingleNodeConsolidation(c))
+	} else {
+		fmt.Printf("single node consolidation is disabled\n")
+	}
+
 	return &Controller{
 		queue:         queue,
 		clock:         clk,
@@ -81,16 +99,7 @@ func NewController(clk clock.Clock, kubeClient client.Client, provisioner *provi
 		recorder:      recorder,
 		cloudProvider: cp,
 		lastRun:       map[string]time.Time{},
-		methods: []Method{
-			// Terminate any NodeClaims that have drifted from provisioning specifications, allowing the pods to reschedule.
-			NewDrift(kubeClient, cluster, provisioner, recorder),
-			// Delete any empty NodeClaims as there is zero cost in terms of disruption.
-			NewEmptiness(c),
-			// Attempt to identify multiple NodeClaims that we can consolidate simultaneously to reduce pod churn
-			NewMultiNodeConsolidation(c),
-			// And finally fall back our single NodeClaim consolidation to further reduce cluster cost.
-			//NewSingleNodeConsolidation(c),
-			},
+		methods:       methods,
 	}
 }
 
