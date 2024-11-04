@@ -212,6 +212,12 @@ type NodeClaimTemplateSpec struct {
 	// +kubebuilder:validation:Schemaless
 	// +optional
 	ExpireAfter NillableDuration `json:"expireAfter,omitempty"`
+	// MinimumPriceImprovementPercent is the minimum price improvement necessary to disrupt this node, as an integer percentage.
+	// The default is 0%, which maintains the existing consolidation behavior prior to this feature.
+	// +kubebuilder:validation:Minimum:=0
+	// +kubebuilder:validation:Maximum:=100
+	// +optional
+	MinimumPriceImprovementPercent *int32 `json:"minimumPriceImprovementPercent,omitempty"`
 }
 
 // This is used to convert between the NodeClaim's NodeClaimSpec to the Nodepool NodeClaimTemplate's NodeClaimSpec.
@@ -222,12 +228,13 @@ func (in *NodeClaimTemplate) ToNodeClaim() *NodeClaim {
 			Annotations: in.ObjectMeta.Annotations,
 		},
 		Spec: NodeClaimSpec{
-			Taints:                 in.Spec.Taints,
-			StartupTaints:          in.Spec.StartupTaints,
-			Requirements:           in.Spec.Requirements,
-			NodeClassRef:           in.Spec.NodeClassRef,
-			TerminationGracePeriod: in.Spec.TerminationGracePeriod,
-			ExpireAfter:            in.Spec.ExpireAfter,
+			Taints:                         in.Spec.Taints,
+			StartupTaints:                  in.Spec.StartupTaints,
+			Requirements:                   in.Spec.Requirements,
+			NodeClassRef:                   in.Spec.NodeClassRef,
+			TerminationGracePeriod:         in.Spec.TerminationGracePeriod,
+			ExpireAfter:                    in.Spec.ExpireAfter,
+			MinimumPriceImprovementPercent: in.Spec.MinimumPriceImprovementPercent,
 		},
 	}
 }
