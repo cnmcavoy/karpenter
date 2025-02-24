@@ -101,7 +101,7 @@ func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, disruptionB
 
 			candidateNames := []string{}
 			for _, c := range disruptableCandidates {
-				candidateNames = append(candidateNames, fmt.Sprintf("%s/%.3f/%.3f", c.Name(), c.disruptionCost, c.Utilization()))
+				candidateNames = append(candidateNames, fmt.Sprintf("%s/%.3f/%.3f", c.Name(), c.DisruptionCost, c.Utilization()))
 			}
 			cLogger := logger.WithValues("disruptableCandidates", candidateNames)
 
