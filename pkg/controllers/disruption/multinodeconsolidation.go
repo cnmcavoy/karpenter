@@ -63,6 +63,7 @@ func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, disruptionB
 			architectures[candidate.Node.Status.NodeInfo.Architecture] += 1
 		}
 	}
+	logger := log.FromContext(ctx).WithValues("disruptionBudgetMapping", disruptionBudgetMapping)
 
 	constrainedByAnyBudget := false
 	for nodepoolName, architectures := range nodePoolsByArch {
@@ -97,6 +98,12 @@ func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, disruptionB
 				disruptionBudgetMapping[candidate.nodePool.Name]--
 			}
 
+			candidateNames := []string{}
+			for _, c := range disruptableCandidates {
+				candidateNames = append(candidateNames, fmt.Sprintf("%s/%.3f/%.3f", c.Name(), c.disruptionCost, c.Utilization()))
+			}
+			cLogger := logger.WithValues("disruptableCandidates", candidateNames)
+
 			// Only consider a maximum batch of 100 NodeClaims to save on computation.
 			// This could be further configurable in the future.
 			maxParallel := lo.Clamp(len(disruptableCandidates), 0, 100)
@@ -108,18 +115,18 @@ func (m *MultiNodeConsolidation) ComputeCommand(ctx context.Context, disruptionB
 
 			if cmd.Decision() == NoOpDecision {
 				constrainedByAnyBudget = constrainedByAnyBudget || constrainedByBudgets
-				log.FromContext(ctx).V(1).Info(fmt.Sprintf("abandoning multi-node consolidation attempt due no candidates (%s/%s) (maxParallel: %d, constrainedByBudgets: %v)", nodepoolName, architecture, maxParallel, constrainedByBudgets))
+				cLogger.V(1).Info(fmt.Sprintf("abandoning multi-node consolidation attempt due no candidates (%s/%s) (maxParallel: %d, constrainedByBudgets: %v)", nodepoolName, architecture, maxParallel, constrainedByBudgets), "disruptionBudgetMapping", disruptionBudgetMapping)
 				continue
 			}
 
 			if err := NewValidation(m.clock, m.cluster, m.kubeClient, m.provisioner, m.cloudProvider, m.recorder, m.queue, m.Reason()).IsValid(ctx, cmd, consolidationTTL); err != nil {
 				if IsValidationError(err) {
-					log.FromContext(ctx).V(1).Info(fmt.Sprintf("abandoning multi-node consolidation attempt due to pod churn, command is no longer valid, %s", cmd))
+					cLogger.V(1).Info(fmt.Sprintf("abandoning multi-node consolidation attempt due to pod churn, command is no longer valid, %s", cmd))
 					return Command{}, scheduling.Results{}, nil
 				}
 				return Command{}, scheduling.Results{}, fmt.Errorf("validating consolidation, %w", err)
 			}
-			log.FromContext(ctx).V(1).Info(fmt.Sprintf("multi-node consolidation cmd success, new nodes: %d, replaced candidates: %d, ", len(cmd.replacements), len(cmd.candidates)))
+			cLogger.V(1).Info(fmt.Sprintf("multi-node consolidation cmd success, new nodes: %d, replaced candidates: %d, ", len(cmd.replacements), len(cmd.candidates)))
 			return cmd, results, nil
 
 		}

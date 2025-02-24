@@ -142,7 +142,6 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 		}
 		return Command{}, pscheduling.Results{}, err
 	}
-	log.FromContext(ctx).V(1).Info(fmt.Sprintf("computeConsolidation len candidates: %d, new node claims: %d", len(candidates), len(results.NewNodeClaims)))
 
 	// if not all of the pods were scheduled, we can't do anything
 	if !results.AllNonPendingPodsScheduled() {
