@@ -4031,6 +4031,13 @@ var _ = Describe("Consolidation", func() {
 						},
 					}}})
 
+			resources := corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: *resource.NewQuantity(1, resource.DecimalSI), corev1.ResourceMemory: *resource.NewQuantity(1, resource.DecimalSI)},
+			}
+			pods[0].Spec.Resources = resources.DeepCopy()
+			pods[1].Spec.Resources = resources.DeepCopy()
+			pods[2].Spec.Resources = resources.DeepCopy()
+
 			ExpectApplied(ctx, env.Client, rs, pods[0], pods[1], pods[2], nodePool)
 			ExpectApplied(ctx, env.Client, nodeClaims[0], nodes[0]) // ensure node1 is the oldest node
 			time.Sleep(2 * time.Second)                             // this sleep is unfortunate, but necessary.  The creation time is from etcd, and we can't mock it, so we
