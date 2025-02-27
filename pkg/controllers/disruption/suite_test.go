@@ -19,6 +19,7 @@ package disruption_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"testing"
@@ -98,6 +99,7 @@ var _ = BeforeSuite(func() {
 	recorder = test.NewEventRecorder()
 	prov = provisioning.NewProvisioner(env.Client, recorder, cloudProvider, cluster, fakeClock)
 	queue = NewTestingQueue(env.Client, recorder, cluster, fakeClock, prov)
+	os.Setenv("INDEED_ENABLE_SINGLE_NODE_CONSOLIDATION", "true")
 	disruptionController = disruption.NewController(fakeClock, env.Client, prov, cloudProvider, recorder, cluster, queue)
 })
 

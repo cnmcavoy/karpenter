@@ -367,8 +367,12 @@ func (in *StateNode) Available() corev1.ResourceList {
 
 // Utilization is the ratio of requested resources to allocatable resources
 func (in *StateNode) Utilization() float64 {
-	alloc := in.Allocatable()
 	requested := in.PodRequests()
+	if len(requested) == 0 {
+		return 0
+	}
+
+	alloc := in.Allocatable()
 	utilization := 0.0
 	for resource, request := range requested {
 		allocResource := alloc[resource]

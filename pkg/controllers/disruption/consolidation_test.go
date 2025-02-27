@@ -19,6 +19,7 @@ package disruption_test
 import (
 	"fmt"
 	"math/rand"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -57,6 +58,7 @@ var _ = Describe("Consolidation", func() {
 		"app": "test",
 	}
 	BeforeEach(func() {
+		os.Setenv("INDEED_ENABLE_SINGLE_NODE_CONSOLIDATION", "true")
 		nodePool = test.NodePool(v1.NodePool{
 			Spec: v1.NodePoolSpec{
 				Disruption: v1.Disruption{
