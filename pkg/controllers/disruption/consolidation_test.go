@@ -4031,12 +4031,15 @@ var _ = Describe("Consolidation", func() {
 						},
 					}}})
 
-			resources := corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{corev1.ResourceCPU: *resource.NewQuantity(1, resource.DecimalSI), corev1.ResourceMemory: *resource.NewQuantity(1, resource.DecimalSI)},
+			pods[0].Spec.Resources = &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: *resource.NewQuantity(2, resource.DecimalSI)},
 			}
-			pods[0].Spec.Resources = resources.DeepCopy()
-			pods[1].Spec.Resources = resources.DeepCopy()
-			pods[2].Spec.Resources = resources.DeepCopy()
+			pods[1].Spec.Resources = &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: *resource.NewQuantity(1, resource.DecimalSI)},
+			}
+			pods[2].Spec.Resources = &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: *resource.NewQuantity(1, resource.DecimalSI)},
+			}
 
 			ExpectApplied(ctx, env.Client, rs, pods[0], pods[1], pods[2], nodePool)
 			ExpectApplied(ctx, env.Client, nodeClaims[0], nodes[0]) // ensure node1 is the oldest node
@@ -4063,7 +4066,7 @@ var _ = Describe("Consolidation", func() {
 			ExpectSingletonReconciled(ctx, queue)
 
 			// Cascade any deletion of the nodeclaim to the node
-			ExpectNodeClaimsCascadeDeletion(ctx, env.Client, nodeClaims[0])
+			ExpectNodeClaimsCascadeDeletion(ctx, env.Client, nodeClaims...)
 
 			// the second node has more pods, so it would normally not be picked for consolidation, except it very little
 			// lifetime remaining, so it should be deleted
