@@ -401,6 +401,8 @@ func (p *Provisioner) Create(ctx context.Context, n *scheduler.NodeClaim, opts .
 	}
 	nodeClaim := n.ToNodeClaim()
 
+	annotateNodeClaimWithNominatedPods(n, nodeClaim)
+
 	if err := p.kubeClient.Create(ctx, nodeClaim); err != nil {
 		return "", err
 	}
