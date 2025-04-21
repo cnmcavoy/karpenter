@@ -77,7 +77,7 @@ func (l *Launch) launchNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (
 	if err != nil {
 		switch {
 		case cloudprovider.IsInsufficientCapacityError(err):
-			l.recorder.Publish(InsufficientCapacityErrorEvent(nodeClaim, err))
+			l.recorder.Publish(InsufficientCapacityErrorEvents(ctx, l.kubeClient, nodeClaim, err)...)
 			log.FromContext(ctx).Error(err, "failed launching nodeclaim")
 
 			if err = l.kubeClient.Delete(ctx, nodeClaim); err != nil {
@@ -110,6 +110,11 @@ func (l *Launch) launchNodeClaim(ctx context.Context, nodeClaim *v1.NodeClaim) (
 			return nil, fmt.Errorf("launching nodeclaim, %w", err)
 		}
 	}
+
+	if nodeClaim.Annotations != nil && nodeClaim.Annotations["karpenter.indeed.com/nominated-pods"] != "" {
+		delete(nodeClaim.Annotations, "karpenter.indeed.com/nominated-pods")
+	}
+
 	log.FromContext(ctx).WithValues(
 		"provider-id", created.Status.ProviderID,
 		"instance-type", created.Labels[corev1.LabelInstanceTypeStable],
