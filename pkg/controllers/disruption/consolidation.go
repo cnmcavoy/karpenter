@@ -159,6 +159,7 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 		return Command{
 			Candidates: candidates,
 			Results:    results,
+			Message:    consolidationMessage(candidates, results, 0.0),
 		}, nil
 	}
 
@@ -230,6 +231,7 @@ func (c *consolidation) computeConsolidation(ctx context.Context, candidates ...
 		Candidates:   candidates,
 		Replacements: replacementsFromNodeClaims(results.NewNodeClaims...),
 		Results:      results,
+		Message:      consolidationMessage(candidates, results, candidatePrice),
 	}, nil
 }
 
@@ -276,6 +278,7 @@ func (c *consolidation) computeSpotToSpotConsolidation(ctx context.Context, cand
 			Candidates:   candidates,
 			Replacements: replacementsFromNodeClaims(results.NewNodeClaims...),
 			Results:      results,
+			Message:      consolidationMessage(candidates, results, candidatePrice),
 		}, nil
 	}
 
@@ -311,6 +314,7 @@ func (c *consolidation) computeSpotToSpotConsolidation(ctx context.Context, cand
 		Candidates:   candidates,
 		Replacements: replacementsFromNodeClaims(results.NewNodeClaims...),
 		Results:      results,
+		Message:      consolidationMessage(candidates, results, candidatePrice),
 	}, nil
 }
 
